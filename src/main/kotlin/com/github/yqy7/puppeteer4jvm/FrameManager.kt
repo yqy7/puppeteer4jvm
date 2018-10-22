@@ -26,7 +26,7 @@ class FrameManager(
 
             with(frameManager.session) {
                 on("Page.frameAttached", Consumer { frameManager.onFrameAttached(it.data!!.get("frameId").asText(), it.data!!.get("parentFrameId")?.asText()) })
-                on("Page.frameNavigated", Consumer(frameManager::onFrameNavigated))
+                on("Page.frameNavigated", Consumer { frameManager.onFrameNavigated(it.data!!.with("frame")) })
                 on("Page.navigatedWithinDocument", Consumer(frameManager::onFrameNavigatedWithinDocument))
                 on("Page.frameDetached", Consumer(frameManager::onFrameDetached))
                 on("Page.frameStoppedLoading", Consumer(frameManager::onFrameStoppedLoading))
@@ -46,7 +46,23 @@ class FrameManager(
     }
 
     private fun handleFrameTree(frameTree: ObjectNode) {
-        frameTree.with("frame").get("parentId")
+        val framePayload = frameTree.with("frame")
+        val parentFrameId = framePayload.get("parentId")?.asText()
+        val frameId = framePayload.get("id").asText()
+        if (parentFrameId != null) {
+            onFrameAttached(frameId, parentFrameId)
+        }
+        onFrameNavigated(framePayload)
+
+        val childFrames = frameTree.withArray("childFrames")
+        if (childFrames.isNull) {
+            return
+        }
+
+        for (frame in childFrames) {
+            handleFrameTree(frame as ObjectNode)
+        }
+
     }
 
     private fun onFrameAttached(frameId: String, parentFrameId: String?) {
@@ -60,8 +76,7 @@ class FrameManager(
         emit("frameattached", objectNode(frame))
     }
 
-    private fun onFrameNavigated(event: Event) {
-        val framePayload = event.data!!.with("framePayload")
+    private fun onFrameNavigated(framePayload: ObjectNode) {
         val frameId = framePayload.get("id").asText()
         val isMainFrame = framePayload.get("parentId") == null
         var frame = if (isMainFrame) mainFrame else frames[frameId]
@@ -137,7 +152,7 @@ class FrameManager(
         val requestFrame = session.createRequestFrame("Page.navigate")
         requestFrame.params
                 .put("url", url)
-                .put("referrer", referer)
+//                .put("referrer", referer)
                 .put("frameId", frame.id)
         val (_, result) = session.send(requestFrame).block()
         var ensureNewDocumentNavigation = result?.get("loaderId") != null
@@ -192,7 +207,7 @@ class Frame private constructor(val frameManager: FrameManager, val session: CDP
     }
 
     fun navigated(framePayload: ObjectNode) {
-        name = framePayload.get("name").asText()
+        name = framePayload.get("name")?.asText()
         navigationURL = framePayload.get("url").asText()
         url = framePayload.get("url").asText()
     }
@@ -213,6 +228,7 @@ class NavigatorWatcher private constructor(
     private val disposableList = mutableListOf<Disposable>()
 
     private val expectedLifecycle: List<String>
+
     init {
         val waitUntil = if (options.waitUntil.isEmpty()) mutableListOf("load") else options.waitUntil
         expectedLifecycle = waitUntil.map { puppeteerToProtocolLifecycle[it] ?: throw RuntimeException("") }
@@ -229,7 +245,7 @@ class NavigatorWatcher private constructor(
     fun registerEventListeners() {
         // 注册要监听的事件
         disposableList.add(session.connection.on("Connection.Events.Disconnected",
-                Consumer<Event> { terminate("Navigation failed because browser has disconnected!")}))
+                Consumer<Event> { terminate("Navigation failed because browser has disconnected!") }))
         disposableList.add(session.on("lifecycleevent", Consumer(this::checkLifecycleComplete)))
         disposableList.add(session.on("framenavigatedwithindocument", Consumer(this::navigatedWithinDocument)))
         disposableList.add(session.on("framedetached", Consumer(this::onFrameDetached)))

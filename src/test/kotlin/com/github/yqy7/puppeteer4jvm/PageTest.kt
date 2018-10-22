@@ -41,7 +41,7 @@ class PageTest {
     fun testGoto() {
         val page = browser.newPage()
         page.goto("http://www.baidu.com", GotoOptions())
-
+        println("goto finished...")
         Thread.sleep(10000)
     }
 }
