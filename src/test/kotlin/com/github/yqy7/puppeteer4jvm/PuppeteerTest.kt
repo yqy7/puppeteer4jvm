@@ -11,14 +11,8 @@ class PuppeteerTest {
     @Test
     fun testLaunch() {
         val puppeteer = Puppeteer(null)
-        val browser = puppeteer.launch(LaunchOptions())
-        println("创建browser成功。。。")
-
-        val page = browser.newPage()
-        val screenshotOptions = ScreenshotOptions(".temp/a.png")
-        page.screenshot(screenshotOptions)
-
-        println("线程结束。。。")
-
+        puppeteer.launch(LaunchOptions(headless = true)).use { browser ->
+            println("创建browser成功" + browser)
+        }
     }
 }

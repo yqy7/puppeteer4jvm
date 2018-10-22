@@ -6,10 +6,12 @@ package com.github.yqy7.puppeteer4jvm
  */
 class BrowserContext(
         private val browser: Browser,
-        private val id: Long?,
+        private val id: String?,
         private val connection: Connection) {
 
     fun newPage(): Page {
         return browser.createPageInContext(id)
     }
 }
+
+class ElementHandle

@@ -2,7 +2,11 @@ package com.github.yqy7.puppeteer4jvm
 
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.module.kotlin.readValue
-import okhttp3.*
+import okhttp3.OkHttpClient
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import okhttp3.Request
+import okhttp3.Response
 import org.slf4j.LoggerFactory
 import reactor.core.publisher.Mono
 import reactor.core.publisher.ReplayProcessor
@@ -17,7 +21,7 @@ import java.util.function.Consumer
  *  @date 2018/10/20
  */
 class Connection private constructor(private val chromeProcess: Process,
-                                     private val wsUrl: String) : Closeable {
+                                     private val wsUrl: String) : EventEmitter(),Closeable {
     private val log = LoggerFactory.getLogger(this.javaClass)
     private val idGenerator = AtomicLong(0)
     private val messages = ReplayProcessor.create<ResponseFrame>(1024)
@@ -106,6 +110,7 @@ class Connection private constructor(private val chromeProcess: Process,
     }
 
     override fun close() {
+        emit("Connection.Events.Disconnected", objectNode())
         chromeProcess.destroyForcibly()
     }
 }

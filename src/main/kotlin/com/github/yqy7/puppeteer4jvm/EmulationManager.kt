@@ -15,7 +15,7 @@ class EmulationManager(private val session: CDPSession) {
     }
 
     fun emulateViewport(viewport: Viewport): Boolean {
-        val screenOrientation = JsonMapper.createObjectNode()
+        val screenOrientation = objectNode()
         if (viewport.isLandscape) {
             screenOrientation.put("angle", 90).put("type", "landscapePrimary")
         } else {
@@ -38,6 +38,7 @@ class EmulationManager(private val session: CDPSession) {
         val reloadNeeded = emulatingMobile != viewport.isMobile || hasTouch != viewport.hasTouch
         emulatingMobile = viewport.isMobile
         hasTouch = viewport.hasTouch
+
         return reloadNeeded
     }
 }

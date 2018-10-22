@@ -8,7 +8,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode
  *  @date 2018/10/20
  */
 data class RequestFrame(val id: Long, val method: String) {
-    var params: ObjectNode = JsonMapper.createObjectNode()
+    var params: ObjectNode = objectNode()
 
     @JsonIgnore
     var subFrameId: Long? = null

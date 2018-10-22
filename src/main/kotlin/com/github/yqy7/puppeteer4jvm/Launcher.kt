@@ -1,8 +1,6 @@
 package com.github.yqy7.puppeteer4jvm
 
 import org.slf4j.LoggerFactory
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.nio.file.Files
 import java.util.stream.Collectors
 
@@ -15,29 +13,29 @@ private val wsPattern = "^DevTools listening on (ws:\\/\\/.*)$".toPattern()
 private val CHROME_PROFILE_PATH = "puppeteer_dev_profile-"
 
 private val DEFAULT_ARGS = setOf(
-    "--disable-background-networking",
-    "--disable-background-timer-throttling",
-    "--disable-breakpad",
-    "--disable-client-side-phishing-detection",
-    "--disable-default-apps",
-    "--disable-dev-shm-usage",
-    "--disable-extensions",
-    "--disable-features=site-per-process",
-    "--disable-hang-monitor",
-    "--disable-popup-blocking",
-    "--disable-prompt-on-repost",
-    "--disable-sync",
-    "--disable-translate",
-    "--metrics-recording-only",
-    "--no-first-run",
-    "--safebrowsing-disable-auto-update",
-    "--enable-automation",
-    "--password-store=basic",
-    "--use-mock-keychain"
+        "--disable-background-networking",
+        "--disable-background-timer-throttling",
+        "--disable-breakpad",
+        "--disable-client-side-phishing-detection",
+        "--disable-default-apps",
+        "--disable-dev-shm-usage",
+        "--disable-extensions",
+        "--disable-features=site-per-process",
+        "--disable-hang-monitor",
+        "--disable-popup-blocking",
+        "--disable-prompt-on-repost",
+        "--disable-sync",
+        "--disable-translate",
+        "--metrics-recording-only",
+        "--no-first-run",
+        "--safebrowsing-disable-auto-update",
+        "--enable-automation",
+        "--password-store=basic",
+        "--use-mock-keychain"
 )
 
 data class LaunchOptions(val ignoreHTTPSErrors: Boolean = false,
-                         val headless: Boolean = false,
+                         val headless: Boolean = true,
                          val executablePath: String? = null,
                          val slowMo: Float? = null,
                          val defaultViewport: Viewport? = null,

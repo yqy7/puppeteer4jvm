@@ -1,7 +1,7 @@
 package com.github.yqy7.puppeteer4jvm
 
 import java.io.File
-import java.util.Properties
+import java.util.*
 
 /**
  *  @author qiyun.yqy
