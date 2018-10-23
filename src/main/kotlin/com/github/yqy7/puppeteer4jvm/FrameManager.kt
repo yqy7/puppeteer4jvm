@@ -10,6 +10,13 @@ import java.util.function.Consumer
  *  @author qiyun.yqy
  *  @date 2018/10/20
  */
+
+data class WaitForSelectorOptions(
+        val visible: Boolean = false,
+        val hidden: Boolean = false,
+        val timeout: Int = 30000
+)
+
 class FrameManager(
         private val session: CDPSession,
         private val page: Page,
@@ -25,8 +32,10 @@ class FrameManager(
             val frameManager = FrameManager(session, page, networkManager)
 
             with(frameManager.session) {
-                on("Page.frameAttached", Consumer { frameManager.onFrameAttached(it.data!!.get("frameId").asText(), it.data!!.get("parentFrameId")?.asText()) })
-                on("Page.frameNavigated", Consumer { frameManager.onFrameNavigated(it.data!!.with("frame")) })
+                on("Page.frameAttached",
+                        Consumer { frameManager.onFrameAttached((it.data as ObjectNode).get("frameId").asText(),
+                                (it.data as ObjectNode).get("parentFrameId")?.asText()) })
+                on("Page.frameNavigated", Consumer { frameManager.onFrameNavigated((it.data as ObjectNode).with("frame")) })
                 on("Page.navigatedWithinDocument", Consumer(frameManager::onFrameNavigatedWithinDocument))
                 on("Page.frameDetached", Consumer(frameManager::onFrameDetached))
                 on("Page.frameStoppedLoading", Consumer(frameManager::onFrameStoppedLoading))
@@ -73,7 +82,7 @@ class FrameManager(
         val parentFrame = frames.get(parentFrameId)
         val frame = Frame.newFrame(this, session, parentFrame, frameId)
         frames[frame.id] = frame
-        emit("frameattached", objectNode(frame))
+        emit(FrameManager.Events.FrameAttached, frame)
     }
 
     private fun onFrameNavigated(framePayload: ObjectNode) {
@@ -103,7 +112,7 @@ class FrameManager(
 
         // Update frame payload.
         frame!!.navigated(framePayload)
-        emit("framenavigated", objectNode(frame))
+        emit(FrameManager.Events.FrameNavigated, frame)
     }
 
     private fun onFrameNavigatedWithinDocument(event: Event) {
@@ -141,7 +150,7 @@ class FrameManager(
 
         frame.detach()
         frames.remove(frame.id)
-        emit("framedetached", objectNode(frame))
+        emit(FrameManager.Events.FrameDetached, frame)
     }
 
     fun navigateFrame(frame: Frame, url: String, options: GotoOptions): Response? {
@@ -160,6 +169,22 @@ class FrameManager(
         watcher.dispose()
 
         return watcher.navigationResponse()
+    }
+
+    fun frame(frameId: String): Frame? {
+        return this.frames.get(frameId)
+    }
+
+    class Events {
+        companion object {
+            val FrameAttached = "frameattached"
+            val FrameNavigated = "framenavigated"
+            val FrameDetached = "framedetached"
+            val LifecycleEvent = "lifecycleevent"
+            val FrameNavigatedWithinDocument = "framenavigatedwithindocument"
+            val ExecutionContextCreated = "executioncontextcreated"
+            val ExecutionContextDestroyed = "executioncontextdestroyed"
+        }
     }
 
 }
@@ -186,8 +211,8 @@ class Frame private constructor(val frameManager: FrameManager, val session: CDP
         }
     }
 
-    fun goto(url: String, options: GotoOptions) {
-        frameManager.navigateFrame(this, url, options)
+    fun goto(url: String, options: GotoOptions): Response? {
+        return frameManager.navigateFrame(this, url, options)
     }
 
     fun setDefaultContext(context: ExecutionContext) {
@@ -210,6 +235,10 @@ class Frame private constructor(val frameManager: FrameManager, val session: CDP
         name = framePayload.get("name")?.asText()
         navigationURL = framePayload.get("url").asText()
         url = framePayload.get("url").asText()
+    }
+
+    fun waitForSelector(selector: String, options: WaitForSelectorOptions) {
+
     }
 }
 
@@ -238,37 +267,40 @@ class NavigatorWatcher private constructor(
         fun newNavigatorWatcher(session: CDPSession, frameManager: FrameManager, networkManager: NetworkManager,
                                 frame: Frame, timeout: Int?, options: GotoOptions): NavigatorWatcher {
             val navigatorWatcher = NavigatorWatcher(session, frameManager, networkManager, frame, timeout, options)
+            // 注册要监听的事件
+            navigatorWatcher.registerEventListeners()
             return navigatorWatcher
         }
     }
 
     fun registerEventListeners() {
-        // 注册要监听的事件
-        disposableList.add(session.connection.on("Connection.Events.Disconnected",
+        disposableList.add(session.connection.on(Connection.Events.Disconnected,
                 Consumer<Event> { terminate("Navigation failed because browser has disconnected!") }))
-        disposableList.add(session.on("lifecycleevent", Consumer(this::checkLifecycleComplete)))
-        disposableList.add(session.on("framenavigatedwithindocument", Consumer(this::navigatedWithinDocument)))
-        disposableList.add(session.on("framedetached", Consumer(this::onFrameDetached)))
-        disposableList.add(session.on("request", Consumer(this::onRequest)))
+        disposableList.add(frameManager.on(FrameManager.Events.LifecycleEvent, Consumer(this::checkLifecycleComplete)))
+        disposableList.add(frameManager.on(FrameManager.Events.FrameNavigatedWithinDocument, Consumer(this::navigatedWithinDocument)))
+        disposableList.add(frameManager.on(FrameManager.Events.FrameDetached, Consumer(this::onFrameDetached)))
+        disposableList.add(networkManager.on(NetworkManager.Events.Request, Consumer(this::onRequest)))
     }
 
     // 检查生命周期是否完成，完成的话执行对应的callback
     fun checkLifecycleComplete(event: Event) {
-
+        println("checkLifecycleComplete-$event")
     }
 
     // document内跳转
     fun navigatedWithinDocument(event: Event) {
-
+        println("navigatedWithinDocument-$event")
     }
 
     //
     fun onFrameDetached(event: Event) {
-
+        println("onFrameDetached-$event")
     }
 
     // 发生请求的时候
     fun onRequest(event: Event) {
+        println("onRequest-$event")
+        val (_, result) = event
 
     }
 
@@ -286,6 +318,7 @@ class NavigatorWatcher private constructor(
             disposable.dispose()
         }
     }
+
 }
 
 val puppeteerToProtocolLifecycle = mapOf(

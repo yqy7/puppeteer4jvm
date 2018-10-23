@@ -1,8 +1,9 @@
 package com.github.yqy7.puppeteer4jvm
 
-import com.fasterxml.jackson.databind.node.ObjectNode
 import org.reactivestreams.Publisher
 import reactor.core.Disposable
+import reactor.core.publisher.DirectProcessor
+import reactor.core.publisher.EmitterProcessor
 import reactor.core.publisher.ReplayProcessor
 import reactor.core.scheduler.Schedulers
 import java.util.function.Consumer
@@ -12,7 +13,7 @@ import java.util.function.Consumer
  *  @date 2018/10/20
  */
 
-data class Event(val name: String, val data: ObjectNode?)
+data class Event(val name: String, val data: Any?)
 
 open class EventEmitter {
     private val eventPublisher = ReplayProcessor.create<Event>()
@@ -22,12 +23,15 @@ open class EventEmitter {
     }
 
     fun on(eventName: String, consumer: Consumer<Event>): Disposable {
+        println(">>>>>>> $eventName")
+
         return eventPublisher.filter { event -> event.name == eventName }
+                .log("event-logger")
                 .subscribeOn(Schedulers.elastic())
                 .subscribe(consumer)
     }
 
-    fun emit(event: String, data: ObjectNode?) {
+    fun emit(event: String, data: Any?) {
         eventPublisher.onNext(Event(event, data))
     }
 }

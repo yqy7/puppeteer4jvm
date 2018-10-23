@@ -93,6 +93,11 @@ data class GotoOptions(
         var referer: String? = null
 )
 
+data class ReloadOptions(
+        var timeout: Int? = null,
+        var waitUntil: List<String> = mutableListOf()
+)
+
 data class Format(val width: Double, val height: Double)
 
 val PaperFormats = mapOf(
@@ -158,11 +163,15 @@ class Page(private val session: CDPSession, private val target: Target, private 
         this.viewport = viewport
         val needReload = emulationManager.emulateViewport(viewport)
         if (needReload) {
-            reload()
+            reload(ReloadOptions())
         }
     }
 
-    fun reload() {
+    fun waitForSelector(selector: String, options: WaitForSelectorOptions) {
+        frameManager.mainFrame()!!.waitForSelector(selector, options)
+    }
+
+        fun reload(options: ReloadOptions) {
         waitForNavigation()
         session.send(session.createRequestFrame("Page.reload")).block()
     }
@@ -171,8 +180,8 @@ class Page(private val session: CDPSession, private val target: Target, private 
 
     }
 
-    fun goto(url: String, options: GotoOptions) {
-        frameManager.mainFrame()!!.goto(url, options)
+    fun goto(url: String, options: GotoOptions): Response? {
+        return frameManager.mainFrame()!!.goto(url, options)
     }
 
     fun screenshot(options: ScreenshotOptions): ByteArray {
@@ -304,6 +313,26 @@ class Page(private val session: CDPSession, private val target: Target, private 
 
         return dataArr
     }
+
+    class Events {
+        val Close = "close"
+        val Console = "console"
+        val Dialog = "dialog"
+        val DOMContentLoaded = "domcontentloaded"
+        val Error = "error"
+        val PageError = "pageerror"
+        val Request = "request"
+        val Response = "response"
+        val RequestFailed = "requestfailed"
+        val RequestFinished = "requestfinished"
+        val FrameAttached = "frameattached"
+        val FrameDetached = "framedetached"
+        val FrameNavigated = "framenavigated"
+        val Load = "load"
+        val Metrics = "metrics"
+        val WorkerCreated = "workercreated"
+        val WorkerDestroyed = "workerdestroyed"
+    };
 
 
 }

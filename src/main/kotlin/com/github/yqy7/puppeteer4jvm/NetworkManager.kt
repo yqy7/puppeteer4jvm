@@ -1,7 +1,10 @@
 package com.github.yqy7.puppeteer4jvm
 
 import com.fasterxml.jackson.databind.node.ObjectNode
+import java.nio.charset.Charset
+import java.util.*
 import java.util.function.Consumer
+
 
 /**
  *  @author qiyun.yqy
@@ -74,77 +77,212 @@ class NetworkManager(private val session: CDPSession) : EventEmitter() {
     private var frameManager: FrameManager? = null
     private val requestIdToRequest = mutableMapOf<String, Request>()
     private var extraHTTPHeaders = mutableMapOf<String, String>()
+    private var requestIdToRequestWillBeSentEvent = mutableMapOf<String, ObjectNode>()
     private var offline = false
     private var credentials: Credentials? = null
     private var userRequestInterceptionEnabled = false
     private var protocolRequestInterceptionEnabled = false
     private var requestHashToRequestIds = multimapOf<String, String>()
     private var requestHashToInterceptionIds = multimapOf<String, String>()
+    private var attemptedAuthentications = mutableSetOf<String>()
 
 
     companion object {
         fun newNetworkManager(session: CDPSession): NetworkManager {
             val networkManager = NetworkManager(session)
 
-            with(session) {
-                on("Network.requestWillBeSent", Consumer(networkManager::onRequestWillBeSent))
-                on("Network.requestIntercepted", Consumer(networkManager::onRequestIntercepted))
-                on("Network.requestServedFromCache", Consumer(networkManager::onRequestServedFromCache))
-                on("Network.responseReceived", Consumer(networkManager::onResponseReceived))
-                on("Network.loadingFinished", Consumer(networkManager::onLoadingFinished))
-                on("Network.loadingFailed", Consumer(networkManager::onLoadingFailed))
-            }
+            networkManager.session.on("Network.requestWillBeSent", Consumer(networkManager::onRequestWillBeSent))
+            networkManager.session.on("Network.requestIntercepted", Consumer(networkManager::onRequestIntercepted))
+            networkManager.session.on("Network.requestServedFromCache", Consumer(networkManager::onRequestServedFromCache))
+            networkManager.session.on("Network.responseReceived", Consumer(networkManager::onResponseReceived))
+            networkManager.session.on("Network.loadingFinished", Consumer(networkManager::onLoadingFinished))
+            networkManager.session.on("Network.loadingFailed", Consumer(networkManager::onLoadingFailed))
 
             return networkManager
         }
     }
 
-    fun onRequest(event: Event, interceptionId: String?) {
-        val redirectChain = listOf<Request>()
-        val data = event.data!!
-        if (data.get("redirectResponse") != null) {
-            val request = requestIdToRequest[data.get("requestId").asText()]
-            if (request != null) {
-                handleRequestRedirect(request, data.with("redirectResponse"))
-//                redirectChain = request
-            }
-        }
-    }
-
     fun handleRequestRedirect(request: Request, responsePayload: ObjectNode) {
+        val response = Response(session, request, responsePayload)
+        request.response = response
+        request.redirectChain.add(request)
+        requestIdToRequest.remove(request.requestId)
 
+        emit(NetworkManager.Events.Response, response)
+        emit(NetworkManager.Events.RequestFinished, request)
     }
 
+    /**
+     * 请求发送之前
+     */
     fun onRequestWillBeSent(event: Event) {
+        val (_, result) = event
+        result as ObjectNode
+
         if (protocolRequestInterceptionEnabled) {
+            val requestHash = generateRequestHash(result.with("request"))
+            val interceptionId = requestHashToInterceptionIds.firstValue(requestHash)
+            if (interceptionId != null) {
+                onRequest(result, interceptionId)
+                requestHashToInterceptionIds.remove(requestHash, interceptionId);
+            } else {
+                requestHashToRequestIds.put(requestHash, result.get("requestId").asText())
+                requestIdToRequestWillBeSentEvent.put(result.get("requestId").asText(), result)
+            }
             return
         }
 
-
+        onRequest(result, null)
     }
 
+    fun onRequest(eventPayload: ObjectNode, interceptionId: String?) {
+        var redirectChain = mutableListOf<Request>()
+
+        // 处理重定向情况
+        if (eventPayload.get("redirectResponse") != null) {
+            val request = requestIdToRequest[eventPayload.get("requestId").asText()]
+            if (request != null) {
+                handleRequestRedirect(request, eventPayload.with("redirectResponse"))
+                redirectChain = request.redirectChain
+            }
+        }
+
+        val frame = if (eventPayload.get("frameId") != null
+                && frameManager != null) frameManager!!.frame(eventPayload.get("frameId").asText()) else null
+        val request = Request(session, frame, interceptionId, userRequestInterceptionEnabled, eventPayload, redirectChain)
+        requestIdToRequest[eventPayload.get("requestId").asText()] = request
+
+        emit(NetworkManager.Events.Request, request)
+    }
+
+    /**
+     * 请求拦截
+     */
     fun onRequestIntercepted(event: Event) {
+        val (_, result) = event
+        result as ObjectNode
 
+        if (result.get("authChallenge") != null) {
+            // "Default"|"CancelAuth"|"ProvideCredentials"
+            val interceptionId = result.get("interceptionId").asText()
+            var response = "Default"
+            if (attemptedAuthentications.contains(interceptionId)) {
+                response = "CancelAuth"
+            } else if (credentials != null) {
+                response = "ProvideCredentials"
+                attemptedAuthentications.add(interceptionId)
+            }
+
+            val requestFrame = session.createRequestFrame("Network.continueInterceptedRequest")
+            val authChallengeResponse = objectNode()
+            authChallengeResponse.put("response", response)
+            credentials?.username?.let { authChallengeResponse.put("username", it) }
+            credentials?.password?.let { authChallengeResponse.put("password", it) }
+
+            requestFrame.params
+                    .put("interceptionId", interceptionId)
+                    .set("authChallengeResponse", authChallengeResponse)
+
+            session.send(requestFrame).block()
+            return
+        }
+
+        if (!userRequestInterceptionEnabled && protocolRequestInterceptionEnabled) {
+            val requestFrame = session.createRequestFrame("Network.continueInterceptedRequest")
+            requestFrame.params.put("interceptionId", result.get("interceptionId").asText())
+            session.send(requestFrame).block()
+        }
+
+        val requestHash = generateRequestHash(result.with("request"))
+        val requestId = requestHashToRequestIds.firstValue(requestHash)
+        if (requestId != null) {
+            val requestWillBeSentEvent = requestIdToRequestWillBeSentEvent.get(requestId)
+            onRequest(requestWillBeSentEvent!!, result.get("interceptionId").asText())
+            requestHashToRequestIds.remove(requestHash, requestId)
+            requestIdToRequestWillBeSentEvent.remove(requestId)
+        } else {
+            requestHashToInterceptionIds.put(requestHash, result.get("interceptionId").asText());
+        }
     }
 
+    /**
+     * 请求为从缓存中获取
+     */
     fun onRequestServedFromCache(event: Event) {
-
+        val (_, result) = event
+        result as ObjectNode
+        val request = requestIdToRequest.get(result.get("requestId").asText())
+        if (request != null) {
+            request.fromMemoryCache = true
+        }
     }
 
+    /**
+     * 收到响应
+     */
     fun onResponseReceived(event: Event) {
+        val (_, result) = event
+        result as ObjectNode
 
+        val request = requestIdToRequest.get(result.get("requestId").asText()) ?: return
+
+        val response = Response(session, request, result.with("response"))
+        request.response = response
+        emit(NetworkManager.Events.Response, response)
     }
 
+    /**
+     * 加载结束
+     */
     fun onLoadingFinished(event: Event) {
+        val (_, result) = event
+        result as ObjectNode
 
+        // For certain requestIds we never receive requestWillBeSent event.
+        // @see https://crbug.com/750469
+        val request = requestIdToRequest.get(result.get("requestId").asText())
+        if (request == null) {
+            return
+        }
+
+        // Under certain conditions we never get the Network.responseReceived
+        // event from protocol. @see https://crbug.com/883475
+        if (request.response() != null) {
+
+        }
+
+        requestIdToRequest.remove(request.requestId)
+//        attemptedAuthentications
+        emit(NetworkManager.Events.RequestFinished, request)
     }
 
+    /**
+     * 加载失败
+     */
     fun onLoadingFailed(event: Event) {
+        val (_, result) = event
+        result as ObjectNode
 
+        // For certain requestIds we never receive requestWillBeSent event.
+        // @see https://crbug.com/750469
+        val request = requestIdToRequest.get(result.get("requestId").asText()) ?: return
+
+        request.failureText = result.get("errorText").asText()
+        val response = request.response
+//        if (response)
+//            response._bodyLoadedPromiseFulfill.call(null);
+        requestIdToRequest.remove(request.requestId)
+//        _attemptedAuthentications.delete(request._interceptionId);
+        emit(NetworkManager.Events.RequestFailed, request)
     }
 
     fun setFrameManager(frameManager: FrameManager) {
         this.frameManager = frameManager
+    }
+
+    fun authenticate(credentials: Credentials) {
+        this.credentials = credentials
+        updateProtocolRequestInterception()
     }
 
     fun setExtraHTTPHeaders(extraHTTPHeaders: Map<String, String>) {
@@ -191,6 +329,7 @@ class NetworkManager(private val session: CDPSession) : EventEmitter() {
     fun updateProtocolRequestInterception() {
         val enabled = userRequestInterceptionEnabled || credentials != null
         if (enabled == protocolRequestInterceptionEnabled) return
+
         protocolRequestInterceptionEnabled = enabled
         val patterns = if (enabled) listOf(mapOf("urlPattern" to "*")) else listOf()
 
@@ -199,8 +338,17 @@ class NetworkManager(private val session: CDPSession) : EventEmitter() {
         session.send(setCacheDisabledRequestFrame).block()
 
         val setRequestInterceptionRequestFrame = session.createRequestFrame("Network.setRequestInterception")
-        setRequestInterceptionRequestFrame.params.put("patterns", objectNode(patterns))
+        setRequestInterceptionRequestFrame.params.set("patterns", objectNode(patterns))
         session.send(setRequestInterceptionRequestFrame).block()
+    }
+
+    class Events {
+        companion object {
+            val Request = "request"
+            val Response = "response"
+            val RequestFailed = "requestfailed"
+            val RequestFinished = "requestfinished"
+        }
     }
 
 }
@@ -213,9 +361,9 @@ data class ContinueOptions(
 )
 
 data class RespondOptions(
-        val status: Int,
-        val headers: Map<String, String>,
-        val contentType: String,
+        val status: Int?,
+        val headers: Map<String, String>?,
+        val contentType: String?,
         val body: String?
 )
 
@@ -238,23 +386,23 @@ val errorReasons = mapOf(
 
 class Request(
         val session: CDPSession,
-        val frame: Frame,
-        val interceptionId: String,
+        val frame: Frame?,
+        val interceptionId: String?,
         val allowInterception: Boolean,
         event: ObjectNode,
-        val redirectChain: List<Request>
+        val redirectChain: MutableList<Request>
 ) {
-    private val requestId = event.get("requestId").asText()
-    private val isNavigationRequest = event.get(requestId).asText() == event.get("loaderId").asText()
+    val requestId = event.get("requestId").asText()
+    private val isNavigationRequest = requestId == event.get("loaderId").asText()
             && event.get("type").asText() == "Document"
     private var interceptionHandled = false
-    private val response: Response? = null
-    private val failureText: String? = null
-    private val url = event.with("request").get("url").asText()
+    var response: Response? = null
+    var failureText: String? = null
+    val url = event.with("request").get("url").asText()
     private val resourceType = event.get("type").asText().toLowerCase()
     private val method = event.with("request").get("method").asText()
-    private val postData: String? = event.with("request").get("postData").asText()
-    private val fromMemoryCache = false
+    private val postData: String? = event.with("request").get("postData")?.asText()
+    var fromMemoryCache = false
     private val headers = mutableMapOf<String, String>()
 
     init {
@@ -289,7 +437,7 @@ class Request(
         return response
     }
 
-    fun frame(): Frame {
+    fun frame(): Frame? {
         return frame
     }
 
@@ -318,11 +466,58 @@ class Request(
     }
 
     fun respond(response: RespondOptions) {
+        if (url.startsWith("data:"))
+            return
 
+        if (!allowInterception) error("Request Interception is not enabled!")
+        if (interceptionHandled) error("Request is already handled!")
+
+        interceptionHandled = true
+
+        val responseBody = response.body?.toByteArray()
+
+        val responseHeaders = mutableMapOf<String, String>()
+        if (response.headers != null) {
+            for (key in response.headers.keys) {
+                responseHeaders[key.toLowerCase()] = response.headers[key]!!
+            }
+        }
+
+        if (response.contentType != null) {
+            responseHeaders["content-type"] = response.contentType
+        }
+
+        if (responseBody != null && ("content-length" !in responseHeaders)) {
+            responseHeaders["content-length"] = responseBody.size.toString()
+        }
+
+        val statusCode = response.status ?: 200
+        val statusText = statusTexts[statusCode.toString()] ?: ""
+        val statusLine = "HTTP/1.1 $statusCode $statusText"
+
+        val CRLF = "\r\n"
+        var text = statusLine + CRLF
+        var responseBuffer = text.toByteArray(Charset.forName("UTF-8"))
+        if (responseBody != null) {
+            responseBuffer = responseBuffer.plus(responseBody)
+        }
+
+        val requestFrame = session.createRequestFrame("Network.continueInterceptedRequest")
+        requestFrame.params.put("interceptionId", interceptionId).put("rawResponse", Base64.getEncoder().encode(responseBuffer))
+        session.send(requestFrame).block()
     }
 
     fun abort(errorCode: String = "failed") {
+        val errorReason = errorReasons[errorCode] ?: error("Unknown error code: $errorCode")
+        if (!allowInterception) error("Request Interception is not enabled!")
+        if (interceptionHandled) error("Request is already handled!")
 
+        interceptionHandled = true
+
+        val requestFrame = session.createRequestFrame("Network.continueInterceptedRequest")
+        requestFrame.params.put("interceptionId", interceptionId).put("errorReason", "errorReason")
+
+        session.send(requestFrame).block()
     }
 
 }
@@ -345,11 +540,82 @@ class Response(
     private val fromDiskCache = responsePayload.get("fromDiskCache").asBoolean()
     private val fromServiceWorker = responsePayload.get("fromServiceWorker").asBoolean()
     private val headers = mutableMapOf<String, String>()
+    private val securityDetails = if (responsePayload.get("securityDetails") != null)
+        SecurityDetails(responsePayload.with("securityDetails")) else null
+
     init {
         val headersPayload = responsePayload.with("headers")
         for (fieldName in headersPayload.fieldNames()) {
             headers[fieldName.toLowerCase()] = headersPayload.get(fieldName).asText()
         }
+    }
+
+    fun remoteAddress(): RemoteAddress {
+        return remoteAddress
+    }
+
+    fun url(): String {
+        return url
+    }
+
+    fun ok(): Boolean {
+        return status == 0 || (status in 200..299)
+    }
+
+    fun status(): Int {
+        return status
+    }
+
+    fun statusText(): String {
+        return statusText
+    }
+
+    fun headers(): MutableMap<String, String> {
+        return headers
+    }
+
+    fun securityDetails(): SecurityDetails? {
+        return securityDetails
+    }
+
+    // buffer/text/json
+    fun buffer(): ByteArray {
+        val requestFrame = session.createRequestFrame("Network.getResponseBody")
+        requestFrame.params.put("requestId", request.requestId)
+        val responseFrame = session.send(requestFrame).block()
+        val (_, result) = responseFrame
+        val body = result!!.get("body").asText()
+        val base64Encoded = result!!.get("base64Encoded").asBoolean()
+        return if (base64Encoded) {
+            Base64.getDecoder().decode(body)
+        } else {
+            body.toByteArray(Charset.forName("UTF-8"))
+        }
+    }
+
+    fun text(): String {
+        val content = buffer()
+        return content.toString(Charset.forName("UTF-8"))
+    }
+
+    fun json(): ObjectNode {
+        return JsonMapper.readTree(text()) as ObjectNode
+    }
+
+    fun request(): Request {
+        return request
+    }
+
+    fun fromCache(): Boolean {
+        return fromDiskCache || request.fromMemoryCache
+    }
+
+    fun fromServiceWorker(): Boolean {
+        return fromServiceWorker
+    }
+
+    fun frame(): Frame? {
+        return request.frame()
     }
 }
 
@@ -385,4 +651,32 @@ class SecurityDetails(securityPayload: ObjectNode) {
     fun protocol(): String? {
         return protocol
     }
+}
+
+fun generateRequestHash(requestPayload: ObjectNode): String {
+    var normalizedURL = requestPayload.get("url").asText()
+    try {
+        normalizedURL = decodeUri(normalizedURL)
+    } catch (e: Exception) {
+    }
+
+    val hash = objectNode()
+    hash.put("url", normalizedURL)
+            .put("method", requestPayload.get("method").asText())
+            .put("postData", requestPayload.get("postData").asText())
+    val headers = objectNode()
+    if (!normalizedURL.startsWith("data:")) {
+        val headersPayload = requestPayload.with("headers")
+        val headerKeys = headersPayload.fieldNames().asSequence().sorted()
+
+        for (key in headerKeys) {
+            val headerKey = key.toLowerCase()
+            if (headerKey == "accept" || headerKey == "referer" || headerKey == "x-devtools-emulate-network-conditions-client-id" || headerKey == "cookie")
+                continue
+            val headerValue = headersPayload.get(key).asText()
+            headers.put(headerKey, headerValue)
+        }
+    }
+    hash.set("headers", headers)
+    return hash.toString()
 }

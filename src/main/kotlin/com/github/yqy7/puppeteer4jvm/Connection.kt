@@ -103,14 +103,20 @@ class Connection private constructor(private val chromeProcess: Process,
         val session = CDPSession(this, targetInfo.get("type").asText(), sessionId)
         // 订阅事件
         session.subscribeFrom(messages
-                .filter { (id, result, error, method, params) -> responseFrame.isEvent() }
-                .map { (id, result, error, method, params) -> Event(responseFrame.method!!, responseFrame.params) })
+                .filter { it.isEvent() }
+                .map { Event(it.method!!, it.params) })
         sessions[sessionId] = session
         return session
     }
 
     override fun close() {
-        emit("Connection.Events.Disconnected", objectNode())
+        emit(Connection.Events.Disconnected, objectNode())
         chromeProcess.destroyForcibly()
+    }
+
+    class Events {
+        companion object {
+            val Disconnected = "Connection.Events.Disconnected"
+        }
     }
 }

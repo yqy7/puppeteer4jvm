@@ -40,8 +40,15 @@ class PageTest {
     @Test
     fun testGoto() {
         val page = browser.newPage()
-        page.goto("http://www.baidu.com", GotoOptions())
-        println("goto finished...")
-        Thread.sleep(10000)
+
+        val response = page.goto("http://127.0.0.1:8080", GotoOptions())
+        println(response)
+
+        Thread.sleep(5000)
+
+        page.reload(ReloadOptions())
+        Thread.sleep(5000)
     }
+
+
 }

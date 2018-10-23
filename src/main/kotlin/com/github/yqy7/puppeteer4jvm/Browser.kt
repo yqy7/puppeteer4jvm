@@ -50,7 +50,7 @@ class Browser private constructor(
         val targetId = targetInfo.get("targetId").asText()
         targets[targetId] = target
 
-        emit("targetcreated", objectNode(target))
+        emit("targetcreated", target)
     }
 
     fun targetDestroyed(responseFrame: ResponseFrame) {
