@@ -1,5 +1,6 @@
 package com.github.yqy7.puppeteer4jvm
 
+import com.fasterxml.jackson.databind.node.ObjectNode
 import org.slf4j.LoggerFactory
 import java.io.Closeable
 import java.lang.RuntimeException
@@ -87,10 +88,67 @@ class Browser private constructor(
             throw RuntimeException("Create page timeout!")
         }
 
-        return target!!.page()
+        return target!!.page()!!
+    }
+
+    fun targets(): List<Target> {
+        return targets.values.filter { it.isInitialized }
+    }
+
+
+    fun disposeContext(contextId: String) {
+        val requestFrame = connection.createRequestFrame("Target.disposeBrowserContext")
+        if (contextId != null) {
+            requestFrame.params.put("browserContextId", contextId)
+        }
+        connection.send(requestFrame).block()
+        contexts.remove(contextId)
+    }
+
+    fun browserContexts(): List<BrowserContext> {
+        return contexts.values  + defaultContext
+    }
+
+    fun defaultBrowserContext(): BrowserContext {
+        return defaultContext
+    }
+
+    fun target(): Target? {
+        return targets().find { it.type() == "browser" }
+    }
+
+    fun pages(): List<Page> {
+        return browserContexts().flatMap { it.pages() }
+    }
+
+    fun version(): String {
+        val version = getVersion()
+        return version.get("product").asText()
+    }
+
+    fun userAgent(): String {
+        val version = getVersion()
+        return version.get("userAgent").asText()
     }
 
     override fun close() {
-        connection.close()
+        disconnect()
+    }
+
+    fun disconnect() {
+        connection.dispose()
+    }
+
+    fun getVersion(): ObjectNode {
+        val requestFrame = connection.createRequestFrame("Browser.getVersion")
+        val (_, result) = connection.send(requestFrame).block()
+        return result!!
+    }
+
+    class Events {
+        val TargetCreated = "targetcreated"
+        val TargetDestroyed = "targetdestroyed"
+        val TargetChanged = "targetchanged"
+        val Disconnected = "disconnected"
     }
 }

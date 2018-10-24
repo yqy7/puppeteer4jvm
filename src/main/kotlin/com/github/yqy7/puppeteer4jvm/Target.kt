@@ -12,17 +12,17 @@ class Target(private val targetInfo: ObjectNode,
              private val sessionFactory: Supplier<CDPSession>,
              private val ignoreHTTPSErrors: Boolean,
              private val defaultViewport: Viewport?) {
-    private val isInitialized = "type" != targetInfo.get("type").asText() || "" != targetInfo.get("type").asText()
+    val isInitialized = "type" != targetInfo.get("type").asText() || "" != targetInfo.get("type").asText()
     private var page: Page? = null
     val targetId = targetInfo.get("targetId").asText()
 
-    fun page(): Page {
+    fun page(): Page? {
         val type = targetInfo.get("type").asText()
         if (("page" == type || "background_page" == type) && page == null) {
             val session = sessionFactory.get()
             page = Page.newPage(session, this, ignoreHTTPSErrors, defaultViewport)
         }
-        return page!!
+        return page
     }
 
     fun browserContext(): BrowserContext {

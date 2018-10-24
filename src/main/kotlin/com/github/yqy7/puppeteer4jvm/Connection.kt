@@ -114,6 +114,10 @@ class Connection private constructor(private val chromeProcess: Process,
         chromeProcess.destroyForcibly()
     }
 
+    fun dispose() {
+        close()
+    }
+
     class Events {
         companion object {
             val Disconnected = "Connection.Events.Disconnected"
